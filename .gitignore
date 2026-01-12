@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+.env
+.venv/
+poetry.lock
+
+# PyCharm
+.idea/
+
+# Docker
+postgres_data/
+
+# Alembic
+alembic/versions/*.py
+!../project/alembic/versions/__init__.py
+
+# OS
+.DS_Store
+Thumbs.db
