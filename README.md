@@ -1,1 +1,34 @@
-# project
+# Library Catalog API
+
+
+## ✅ Реализованные функции
+
+- **Асинхронная архитектура** (FastAPI + SQLAlchemy async)
+- **JWT Аутентификация** (токены Bearer)
+- **Интеграция с Open Library API** с обогащением данных
+- **Кэширование** (aiocache с TTL 5 минут)
+- **Поддержка UTF-8** (полная поддержка кириллицы)
+- **Корректное управление ресурсами** (ClientsManager)
+- **Оптимизация базы данных** (поисковые индексы)
+- **Управление транзакциями** (паттерн Unit of Work)
+
+## 🚀 Быстрый запуск
+
+### Требования
+- Python 3.11+
+- Docker & Docker Compose
+- Poetry
+
+### Установка
+```bash
+# Установка зависимостей
+poetry install
+
+# Запуск базы данных
+docker-compose up -d
+
+# Применение миграций
+poetry run alembic upgrade head
+
+# Запуск сервера
+poetry run uvicorn src.library_catalog.main:app --reload
