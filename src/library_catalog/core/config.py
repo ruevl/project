@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     openlibrary_base_url: str = "https://openlibrary.org"
     openlibrary_timeout: float = 10.0
 
+    # JWT Auth (добавлено)
+    jwt_secret_key: str = "super-secret-key-change-in-production-2025!"
+    jwt_algorithm: str = "HS256"
+    jwt_access_token_expire_minutes: int = 30
+
     model_config = SettingsConfigDict(
         env_file=".env",
         case_sensitive=False,

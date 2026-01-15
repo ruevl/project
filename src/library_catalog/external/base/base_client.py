@@ -1,7 +1,7 @@
 """Базовый HTTP клиент для внешних API."""
 
+import asyncio
 import logging
-import time
 from abc import ABC, abstractmethod
 
 import httpx
@@ -19,11 +19,11 @@ class BaseApiClient(ABC):
     """
 
     def __init__(
-            self,
-            base_url: str,
-            timeout: float = 10.0,
-            retries: int = 3,
-            backoff: float = 0.5,
+        self,
+        base_url: str,
+        timeout: float = 10.0,
+        retries: int = 3,
+        backoff: float = 0.5,
     ):
         """
         Инициализация клиента.
@@ -61,12 +61,12 @@ class BaseApiClient(ABC):
         return self.base_url + path
 
     async def _request(
-            self,
-            method: str,
-            path: str,
-            params: dict | None = None,
-            json: dict | None = None,
-            headers: dict | None = None,
+        self,
+        method: str,
+        path: str,
+        params: dict | None = None,
+        json: dict | None = None,
+        headers: dict | None = None,
     ) -> dict:
         """
         Выполнить HTTP запрос с retry логикой.
@@ -100,6 +100,9 @@ class BaseApiClient(ABC):
                 )
 
                 response.raise_for_status()
+                # Обработка пустых или 204 ответов
+                if response.status_code == 204 or not response.content:
+                    return {}
                 return response.json()
 
             except httpx.TimeoutException:
@@ -109,23 +112,34 @@ class BaseApiClient(ABC):
 
                 wait_time = self.backoff * (2 ** attempt)
                 self.logger.warning(
-                    f"Timeout, retrying in {wait_time}s... "
+                    f"Timeout, retrying in {wait_time:.1f}s... "
                     f"(attempt {attempt + 1}/{self.retries})"
                 )
-                time.sleep(wait_time)
+                await asyncio.sleep(wait_time)
 
             except httpx.HTTPStatusError as e:
-                # 5xx ошибки - retry
+                # 5xx ошибки — retry
                 if e.response.status_code >= 500 and attempt < self.retries - 1:
                     wait_time = self.backoff * (2 ** attempt)
                     self.logger.warning(
                         f"Server error {e.response.status_code}, "
-                        f"retrying in {wait_time}s..."
+                        f"retrying in {wait_time:.1f}s..."
                     )
-                    time.sleep(wait_time)
+                    await asyncio.sleep(wait_time)
                 else:
                     self.logger.error(f"HTTP error: {e}")
                     raise
+
+            except httpx.RequestError as e:
+                # Сетевые ошибки
+                if attempt == self.retries - 1:
+                    self.logger.error(f"Request failed permanently: {e}")
+                    raise
+                wait_time = self.backoff * (2 ** attempt)
+                self.logger.warning(
+                    f"Network error, retrying in {wait_time:.1f}s..."
+                )
+                await asyncio.sleep(wait_time)
 
     async def _get(self, path: str, **kwargs) -> dict:
         """

@@ -15,6 +15,8 @@ from ..exceptions import (
 )
 from ..mappers.book_mapper import BookMapper
 
+from ...core.cache import cache
+
 logger = logging.getLogger(__name__)
 
 
@@ -26,9 +28,9 @@ class BookService:
     """
 
     def __init__(
-            self,
-            book_repository: BookRepository,
-            openlibrary_client: OpenLibraryClient,
+        self,
+        book_repository: BookRepository,
+        openlibrary_client: OpenLibraryClient,
     ):
         """
         Инициализация сервиса.
@@ -72,7 +74,7 @@ class BookService:
         # 3. Обогащение данных из Open Library
         extra = await self._enrich_book_data(book_data)
 
-        # 4. Создание в БД
+        # 4. Создание в БД (только flush, без commit)
         book = await self.book_repo.create(
             title=book_data.title,
             author=book_data.author,
@@ -83,6 +85,8 @@ class BookService:
             description=book_data.description,
             extra=extra,
         )
+
+        await self.book_repo.session.commit()
 
         # 5. Маппинг в DTO
         return BookMapper.to_show_book(book)
@@ -133,11 +137,13 @@ class BookService:
         if book_data.pages is not None:
             self._validate_pages(book_data.pages)
 
-        # Обновить
+        # Обновить (только flush)
         updated = await self.book_repo.update(
             book_id,
             **book_data.model_dump(exclude_unset=True)
         )
+
+        await self.book_repo.session.commit()
 
         return BookMapper.to_show_book(updated)
 
@@ -155,15 +161,17 @@ class BookService:
         if not deleted:
             raise BookNotFoundException(book_id)
 
+        await self.book_repo.session.commit()
+
     async def search_books(
-            self,
-            title: str | None = None,
-            author: str | None = None,
-            genre: str | None = None,
-            year: int | None = None,
-            available: bool | None = None,
-            limit: int = 20,
-            offset: int = 0,
+        self,
+        title: str | None = None,
+        author: str | None = None,
+        genre: str | None = None,
+        year: int | None = None,
+        available: bool | None = None,
+        limit: int = 20,
+        offset: int = 0,
     ) -> tuple[list, int]:
         """
         Поиск книг с фильтрацией и пагинацией.
@@ -213,21 +221,26 @@ class BookService:
 
     async def _enrich_book_data(self, book_data) -> dict | None:
         """
-        Обогатить данные книги из Open Library.
-
-        Не выбрасывает исключение если API недоступен.
+        Обогатить данные книги из Open Library с кэшированием.
         """
+        if book_data.isbn:
+            cache_key = f"ol:isbn:{book_data.isbn}"
+        else:
+            cache_key = f"ol:title:{book_data.title}:author:{book_data.author}"
+
+        cached = await cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         try:
             extra = await self.ol_client.enrich(
                 title=book_data.title,
                 author=book_data.author,
                 isbn=book_data.isbn,
             )
-            return extra if extra else None
+            if extra:
+                await cache.set(cache_key, extra)
+            return extra
         except OpenLibraryException:
-            # Логируем но не прерываем создание книги
-            logger.warning(
-                "Failed to enrich book data from Open Library",
-                extra={"title": book_data.title, "author": book_data.author}
-            )
+            logger.warning("Failed to enrich book data from Open Library")
             return None

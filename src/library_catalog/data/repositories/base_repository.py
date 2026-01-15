@@ -13,89 +13,57 @@ T = TypeVar('T', bound=Base)
 
 class BaseRepository(Generic[T]):
     """
-    Базовый репозиторий с CRUD операциями.
+    Базовый репозиторий для CRUD операций.
 
-    Generic репозиторий для любой модели SQLAlchemy.
+    ВАЖНО: Репозиторий НЕ делает commit!
+    Commit — это ответственность сервиса.
     """
 
     def __init__(self, session: AsyncSession, model: Type[T]):
-        """
-        Инициализация репозитория.
-
-        Args:
-            session: Async сессия SQLAlchemy
-            model: Класс модели SQLAlchemy
-        """
+        """Инициализация репозитория."""
         self.session = session
         self.model = model
 
     async def create(self, **kwargs) -> T:
         """
-        Создать новую запись.
+        Создать новую запись БЕЗ commit.
 
-        Args:
-            **kwargs: Поля для создания
-
-        Returns:
-            Созданная запись
+        flush() генерирует ID и проверяет constraints,
+        но оставляет commit вызывающему коду.
         """
         instance = self.model(**kwargs)
         self.session.add(instance)
-        await self.session.commit()
+        await self.session.flush()
         await self.session.refresh(instance)
         return instance
 
     async def get_by_id(self, id: UUID) -> T | None:
-        """
-        Получить запись по ID.
-
-        Args:
-            id: UUID записи
-
-        Returns:
-            Запись или None
-        """
+        """Получить запись по ID."""
         result = await self.session.get(self.model, id)
         return result
 
     async def update(self, id: UUID, **kwargs) -> T | None:
-        """
-        Обновить запись.
-
-        Args:
-            id: UUID записи
-            **kwargs: Поля для обновления
-
-        Returns:
-            Обновлённая запись или None
-        """
+        """Обновить запись БЕЗ commit."""
         instance = await self.get_by_id(id)
         if instance is None:
             return None
 
         for key, value in kwargs.items():
-            setattr(instance, key, value)
+            if hasattr(instance, key):
+                setattr(instance, key, value)
 
-        await self.session.commit()
+        await self.session.flush()
         await self.session.refresh(instance)
         return instance
 
     async def delete(self, id: UUID) -> bool:
-        """
-        Удалить запись.
-
-        Args:
-            id: UUID записи
-
-        Returns:
-            True если удалено, False если не найдено
-        """
+        """Удалить запись БЕЗ commit."""
         instance = await self.get_by_id(id)
         if instance is None:
             return False
 
         await self.session.delete(instance)
-        await self.session.commit()
+        await self.session.flush()
         return True
 
     async def get_all(
@@ -103,16 +71,7 @@ class BaseRepository(Generic[T]):
             limit: int = 100,
             offset: int = 0,
     ) -> list[T]:
-        """
-        Получить все записи с пагинацией.
-
-        Args:
-            limit: Максимум записей
-            offset: Сдвиг
-
-        Returns:
-            Список записей
-        """
+        """Получить все записи с пагинацией."""
         stmt = select(self.model).limit(limit).offset(offset)
         result = await self.session.execute(stmt)
         return list(result.scalars().all())

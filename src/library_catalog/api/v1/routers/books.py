@@ -5,12 +5,16 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query, status
 from ..schemas.book import BookCreate, BookUpdate, ShowBook
 from ..schemas.common import PaginatedResponse, PaginationParams
-from ...dependencies import BookServiceDep
+from ...dependencies import BookServiceDep, CurrentUser
 
 router = APIRouter(prefix="/books", tags=["Books"])
 
 @router.post("/", response_model=ShowBook, status_code=status.HTTP_201_CREATED)
-async def create_book(book_data: BookCreate, service: BookServiceDep):
+async def create_book(
+    book_data: BookCreate,
+    service: BookServiceDep,
+    current_user: CurrentUser,
+):
     return await service.create_book(book_data)
 
 @router.get("/", response_model=PaginatedResponse[ShowBook])
@@ -39,9 +43,18 @@ async def get_book(book_id: UUID, service: BookServiceDep):
     return await service.get_book(book_id)
 
 @router.patch("/{book_id}", response_model=ShowBook)
-async def update_book(book_id: UUID, book_data: BookUpdate, service: BookServiceDep):
+async def update_book(
+    book_id: UUID,
+    book_data: BookUpdate,
+    service: BookServiceDep,
+    current_user: CurrentUser,
+):
     return await service.update_book(book_id, book_data)
 
 @router.delete("/{book_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_book(book_id: UUID, service: BookServiceDep):
+async def delete_book(
+    book_id: UUID,
+    service: BookServiceDep,
+    current_user: CurrentUser,
+):
     await service.delete_book(book_id)
