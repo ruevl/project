@@ -1,3 +1,33 @@
+Metadata-Version: 2.4
+Name: library-catalog
+Version: 1.0.0
+Summary: Library Catalog REST API with FastAPI
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: fastapi<0.116.0,>=0.115.12
+Requires-Dist: uvicorn[standard]<0.35.0,>=0.34.2
+Requires-Dist: sqlalchemy<3.0.0,>=2.0.37
+Requires-Dist: alembic<2.0.0,>=1.14.3
+Requires-Dist: asyncpg<0.31.0,>=0.30.0
+Requires-Dist: psycopg2-binary<3.0.0,>=2.9.11
+Requires-Dist: greenlet<4.0.0,>=3.3.0
+Requires-Dist: pydantic[email]<3.0.0,>=2.10.5
+Requires-Dist: pydantic-settings<3.0.0,>=2.7.1
+Requires-Dist: httpx<0.29.0,>=0.28.1
+Requires-Dist: python-dotenv<2.0.0,>=1.2.1
+Requires-Dist: aiocache<0.13.0,>=0.12.3
+Requires-Dist: redis[hiredis]<6.0.0,>=5.0.0
+Requires-Dist: python-jose[cryptography]<4.0.0,>=3.5.0
+Requires-Dist: passlib[bcrypt]<2.0.0,>=1.7.4
+Requires-Dist: python-multipart<0.1.0,>=0.0.9
+Provides-Extra: dev
+Requires-Dist: pytest<9.0.0,>=8.0.0; extra == "dev"
+Requires-Dist: pytest-asyncio<0.24.0,>=0.23.0; extra == "dev"
+Requires-Dist: pytest-cov<5.0.0,>=4.1.0; extra == "dev"
+Requires-Dist: httpx<0.29.0,>=0.28.1; extra == "dev"
+Requires-Dist: ruff<0.9.0,>=0.8.5; extra == "dev"
+Requires-Dist: mypy<2.0.0,>=1.8.0; extra == "dev"
+
 📚 Library Catalog API
 Production-ready REST API для управления библиотечным каталогом с интеграцией OpenLibrary API.
 ✨ Возможности
@@ -70,7 +100,7 @@ poetry run alembic upgrade head
 6. Запуск сервера
 bash
 # Development режим с hot reload
-poetry run uvicorn --app-dir src library_catalog.main:app --reload
+poetry run uvicorn src.library_catalog.main:app --reload
 
 # Production режим
 poetry run uvicorn src.library_catalog.main:app --host 0.0.0.0 --port 8000

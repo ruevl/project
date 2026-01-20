@@ -1,3 +1,4 @@
+# src/library_catalog/core/database.py
 """Настройка подключения к базе данных."""
 
 from typing import AsyncGenerator
@@ -20,10 +21,10 @@ class Base(DeclarativeBase):
 
 # Создаём async engine
 engine: AsyncEngine = create_async_engine(
-    settings.database_url_str,
-    pool_size=settings.database_pool_size,
+    str(settings.database_url),
     echo=settings.debug,
     future=True,
+    # pool_size=10,
 )
 
 # Создаём фабрику сессий

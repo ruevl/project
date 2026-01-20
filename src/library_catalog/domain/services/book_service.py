@@ -1,246 +1,240 @@
-"""Сервис для работы с книгами."""
+# src/library_catalog/domain/services/book_service.py
+"""Book service with Unit of Work pattern and cache invalidation."""
 
 import logging
 from datetime import datetime
 from uuid import UUID
 
-from ...data.repositories.book_repository import BookRepository
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from ...api.v1.schemas.book import BookCreate, BookUpdate, ShowBook
+from ...api.v1.schemas.common import PaginatedResponse, PaginationParams
+from ...core.cache import cache, CacheKeys
+from ...data.unit_of_work import UnitOfWork
 from ...external.openlibrary.client import OpenLibraryClient
 from ..exceptions import (
     BookAlreadyExistsException,
     BookNotFoundException,
-    InvalidPagesException,
     InvalidYearException,
-    OpenLibraryException,
+    InvalidPagesException,
 )
 from ..mappers.book_mapper import BookMapper
-
-from ...core.cache import cache
 
 logger = logging.getLogger(__name__)
 
 
 class BookService:
-    """
-    Сервис для работы с книгами.
-
-    Содержит всю бизнес-логику приложения.
-    """
+    """Book business logic service using Unit of Work pattern."""
 
     def __init__(
-        self,
-        book_repository: BookRepository,
-        openlibrary_client: OpenLibraryClient,
+            self,
+            session: AsyncSession,
+            openlibrary_client: OpenLibraryClient,
     ):
         """
-        Инициализация сервиса.
+        Initialize service.
 
         Args:
-            book_repository: Репозиторий книг
-            openlibrary_client: Клиент Open Library API
+            session: Database session for UnitOfWork
+            openlibrary_client: Client for OpenLibrary API
         """
-        self.book_repo = book_repository
+        self.session = session
         self.ol_client = openlibrary_client
 
-    async def create_book(self, book_data):
-        """
-        Создать новую книгу с обогащением из Open Library.
-
-        Бизнес-правила:
-        - Год не в будущем
-        - Страницы > 0
-        - ISBN уникален (если указан)
-
-        Args:
-            book_data: Данные для создания (BookCreate)
-
-        Returns:
-            ShowBook: Созданная книга
-
-        Raises:
-            InvalidYearException: Если год невалиден
-            InvalidPagesException: Если страницы <= 0
-            BookAlreadyExistsException: Если ISBN уже существует
-        """
-        # 1. Валидация бизнес-правил
-        self._validate_book_data(book_data)
-
-        # 2. Проверка уникальности ISBN
-        if book_data.isbn:
-            existing = await self.book_repo.find_by_isbn(book_data.isbn)
-            if existing:
-                raise BookAlreadyExistsException(book_data.isbn)
-
-        # 3. Обогащение данных из Open Library
-        extra = await self._enrich_book_data(book_data)
-
-        # 4. Создание в БД (только flush, без commit)
-        book = await self.book_repo.create(
-            title=book_data.title,
-            author=book_data.author,
-            year=book_data.year,
-            genre=book_data.genre,
-            pages=book_data.pages,
-            isbn=book_data.isbn,
-            description=book_data.description,
-            extra=extra,
-        )
-
-        await self.book_repo.session.commit()
-
-        # 5. Маппинг в DTO
-        return BookMapper.to_show_book(book)
-
-    async def get_book(self, book_id: UUID):
-        """
-        Получить книгу по ID.
-
-        Args:
-            book_id: UUID книги
-
-        Returns:
-            ShowBook: Книга
-
-        Raises:
-            BookNotFoundException: Если книга не найдена
-        """
-        book = await self.book_repo.get_by_id(book_id)
-        if book is None:
-            raise BookNotFoundException(book_id)
-
-        return BookMapper.to_show_book(book)
-
-    async def update_book(self, book_id: UUID, book_data):
-        """
-        Обновить книгу.
-
-        Обновляются только переданные поля.
-
-        Args:
-            book_id: UUID книги
-            book_data: Данные для обновления (BookUpdate)
-
-        Returns:
-            ShowBook: Обновлённая книга
-
-        Raises:
-            BookNotFoundException: Если книга не найдена
-        """
-        # Проверить существование
-        existing = await self.book_repo.get_by_id(book_id)
-        if existing is None:
-            raise BookNotFoundException(book_id)
-
-        # Валидация если обновляется год/страницы
-        if book_data.year is not None:
-            self._validate_year(book_data.year)
-        if book_data.pages is not None:
-            self._validate_pages(book_data.pages)
-
-        # Обновить (только flush)
-        updated = await self.book_repo.update(
-            book_id,
-            **book_data.model_dump(exclude_unset=True)
-        )
-
-        await self.book_repo.session.commit()
-
-        return BookMapper.to_show_book(updated)
-
-    async def delete_book(self, book_id: UUID) -> None:
-        """
-        Удалить книгу.
-
-        Args:
-            book_id: UUID книги
-
-        Raises:
-            BookNotFoundException: Если книга не найдена
-        """
-        deleted = await self.book_repo.delete(book_id)
-        if not deleted:
-            raise BookNotFoundException(book_id)
-
-        await self.book_repo.session.commit()
-
-    async def search_books(
-        self,
-        title: str | None = None,
-        author: str | None = None,
-        genre: str | None = None,
-        year: int | None = None,
-        available: bool | None = None,
-        limit: int = 20,
-        offset: int = 0,
-    ) -> tuple[list, int]:
-        """
-        Поиск книг с фильтрацией и пагинацией.
-
-        Returns:
-            tuple: (список книг, общее количество)
-        """
-        # Получить книги
-        books = await self.book_repo.find_by_filters(
-            title=title,
-            author=author,
-            genre=genre,
-            year=year,
-            available=available,
-            limit=limit,
-            offset=offset,
-        )
-
-        # Подсчитать общее количество
-        total = await self.book_repo.count_by_filters(
-            title=title,
-            author=author,
-            genre=genre,
-            year=year,
-            available=available,
-        )
-
-        return BookMapper.to_show_books(books), total
-
-    # ========== ПРИВАТНЫЕ МЕТОДЫ ==========
-
-    def _validate_book_data(self, data) -> None:
-        """Валидация бизнес-правил для новой книги."""
-        self._validate_year(data.year)
-        self._validate_pages(data.pages)
-
     def _validate_year(self, year: int) -> None:
-        """Проверить что год валиден."""
+        """Validate book year."""
         current_year = datetime.now().year
         if year < 1000 or year > current_year:
             raise InvalidYearException(year)
 
     def _validate_pages(self, pages: int) -> None:
-        """Проверить что количество страниц валидно."""
+        """Validate book pages."""
         if pages <= 0:
             raise InvalidPagesException(pages)
 
-    async def _enrich_book_data(self, book_data) -> dict | None:
+    async def _enrich_book_data(self, book_data: BookCreate) -> dict | None:
         """
-        Обогатить данные книги из Open Library с кэшированием.
+        Enrich book data from OpenLibrary API.
+
+        Returns enriched data or None if enrichment fails.
         """
-        if book_data.isbn:
-            cache_key = f"ol:isbn:{book_data.isbn}"
-        else:
-            cache_key = f"ol:title:{book_data.title}:author:{book_data.author}"
-
-        cached = await cache.get(cache_key)
-        if cached is not None:
-            return cached
-
         try:
-            extra = await self.ol_client.enrich(
+            extra_data = await self.ol_client.enrich(
+                isbn=book_data.isbn,
                 title=book_data.title,
                 author=book_data.author,
-                isbn=book_data.isbn,
             )
-            if extra:
-                await cache.set(cache_key, extra)
-            return extra
-        except OpenLibraryException:
-            logger.warning("Failed to enrich book data from Open Library")
+
+            if extra_data:
+                logger.info(
+                    f"Successfully enriched book '{book_data.title}' with OpenLibrary data"
+                )
+
+            return extra_data
+
+        except Exception as e:
+            logger.warning(
+                f"Failed to enrich book '{book_data.title}' from OpenLibrary: {e}",
+                extra={"isbn": book_data.isbn, "error": str(e)}
+            )
             return None
+
+    async def create_book(self, book_data: BookCreate) -> ShowBook:
+        """
+        Create a new book with enrichment from OpenLibrary.
+
+        Args:
+            book_data: Book creation data
+
+        Returns:
+            Created book with enriched data
+
+        Raises:
+            BookAlreadyExistsException: If ISBN already exists
+            InvalidYearException: If year is invalid
+            InvalidPagesException: If pages is invalid
+        """
+        async with UnitOfWork(self.session) as uow:
+            # Validation
+            self._validate_year(book_data.year)
+            if book_data.pages:
+                self._validate_pages(book_data.pages)
+
+            # Check for duplicates by ISBN
+            if book_data.isbn:
+                existing = await uow.books.find_by_isbn(book_data.isbn)
+                if existing:
+                    raise BookAlreadyExistsException(book_data.isbn)
+
+            # Enrich data from OpenLibrary
+            extra_data = await self._enrich_book_data(book_data)
+
+            # Create book
+            book = await uow.books.create(
+                title=book_data.title,
+                author=book_data.author,
+                year=book_data.year,
+                isbn=book_data.isbn,
+                pages=book_data.pages,
+                cover_url=extra_data.get("cover_url") if extra_data else None,
+                subjects=extra_data.get("subjects") if extra_data else None,
+            )
+
+            # Commit transaction
+            await uow.commit()
+
+            # 🔥 Invalidate cache - use specific keys instead of patterns
+            await cache.delete(CacheKeys.books_list_all())
+            if book_data.isbn:
+                await cache.delete(CacheKeys.openlibrary_isbn(book_data.isbn))
+
+            return BookMapper.to_show_book(book)
+
+    async def get_books(
+            self,
+            pagination: PaginationParams,
+            title: str | None = None,
+            author: str | None = None,
+            year: int | None = None,
+    ) -> PaginatedResponse[ShowBook]:
+        """Get paginated list of books with optional filters."""
+        async with UnitOfWork(self.session) as uow:
+            books, total = await uow.books.find_all(
+                limit=pagination.page_size,
+                offset=(pagination.page - 1) * pagination.page_size,
+                title=title,
+                author=author,
+                year=year,
+            )
+
+            show_books = [BookMapper.to_show_book(book) for book in books]
+
+            return PaginatedResponse.create(
+                items=show_books,
+                total=total,
+                pagination=pagination,
+            )
+
+    async def get_book(self, book_id: UUID) -> ShowBook:
+        """
+        Get book by ID.
+
+        Raises:
+            BookNotFoundException: If book not found
+        """
+        # Try to get from cache first
+        cache_key = CacheKeys.book_detail(str(book_id))
+        cached_book = await cache.get(cache_key)
+        if cached_book:
+            return ShowBook(**cached_book)
+
+        async with UnitOfWork(self.session) as uow:
+            book = await uow.books.get_by_id(book_id)
+
+            if not book:
+                raise BookNotFoundException(book_id)
+
+            # Cache the result
+            book_dict = BookMapper.to_show_book(book).model_dump()
+            await cache.set(cache_key, book_dict)
+
+            return BookMapper.to_show_book(book)
+
+    async def update_book(self, book_id: UUID, book_data: BookUpdate) -> ShowBook:
+        """
+        Update book.
+
+        Raises:
+            BookNotFoundException: If book not found
+            InvalidYearException: If year is invalid
+            InvalidPagesException: If pages is invalid
+        """
+        async with UnitOfWork(self.session) as uow:
+            # Get existing book
+            book = await uow.books.get_by_id(book_id)
+            if not book:
+                raise BookNotFoundException(book_id)
+
+            # Validate new data
+            if book_data.year is not None:
+                self._validate_year(book_data.year)
+            if book_data.pages is not None:
+                self._validate_pages(book_data.pages)
+
+            # Update book
+            updated_book = await uow.books.update(book_id, **book_data.model_dump(exclude_unset=True))
+
+            # Commit transaction
+            await uow.commit()
+
+            # 🔥 Invalidate cache - use specific keys
+            await cache.delete(CacheKeys.book_detail(str(book_id)))
+            await cache.delete(CacheKeys.books_list_all())
+
+            return BookMapper.to_show_book(updated_book)
+
+    async def delete_book(self, book_id: UUID) -> None:
+        """
+        Delete book.
+
+        Raises:
+            BookNotFoundException: If book not found
+        """
+        async with UnitOfWork(self.session) as uow:
+            book = await uow.books.get_by_id(book_id)
+            if not book:
+                raise BookNotFoundException(book_id)
+
+            # Store ISBN for cache invalidation
+            book_isbn = book.isbn
+
+            await uow.books.delete(book_id)
+
+            # Commit transaction
+            await uow.commit()
+
+            # 🔥 Invalidate cache - use specific keys
+            await cache.delete(CacheKeys.book_detail(str(book_id)))
+            await cache.delete(CacheKeys.books_list_all())
+            if book_isbn:
+                await cache.delete(CacheKeys.openlibrary_isbn(book_isbn))

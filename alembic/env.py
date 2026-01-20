@@ -1,25 +1,34 @@
 # alembic/env.py
 
-from logging.config import fileConfig
-from sqlalchemy import engine_from_config, pool
-from alembic import context
 import os
 import sys
 
-# Добавляем корень проекта в PYTHONPATH
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+# ЗАГРУЖАЕМ .env с ЯВНЫМ ПУТЁМ
+from dotenv import load_dotenv
+# Указываем путь к .env относительно этого файла
+dotenv_path = os.path.join(os.path.dirname(__file__), '..', '.env')
+load_dotenv(dotenv_path=dotenv_path)
 
-# Импортируем настройки и модели
-from src.library_catalog.core.config import settings
-from src.library_catalog.core.database import Base
-from src.library_catalog.data.models import book  # noqa: F401
+from logging.config import fileConfig
+from sqlalchemy import engine_from_config, pool
+from alembic import context
 
-# Убираем +asyncpg, потому что Alembic — синхронный инструмент
+# Добавляем src в путь
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+
+# Теперь можно импортировать настройки
+from library_catalog.core.config import settings
+from library_catalog.core.database import Base
+
+# Импортируем модели
+from library_catalog.data.models.user import User  # noqa: F401
+from library_catalog.data.models.book import Book  # noqa: F401
+
+# Остальной код остаётся без изменений...
 database_url = str(settings.database_url).replace("+asyncpg", "")
+# ... и так далее
 
 config = context.config
-
-# Передаём URL напрямую (в обход alembic.ini)
 config.set_main_option("sqlalchemy.url", database_url)
 
 if config.config_file_name is not None:
@@ -29,7 +38,6 @@ target_metadata = Base.metadata
 
 
 def run_migrations_offline():
-    """Run migrations in 'offline' mode."""
     url = config.get_main_option("sqlalchemy.url")
     context.configure(
         url=url,
@@ -43,7 +51,6 @@ def run_migrations_offline():
 
 
 def run_migrations_online():
-    """Run migrations in 'online' mode."""
     connectable = engine_from_config(
         config.get_section(config.config_ini_section),
         prefix="sqlalchemy.",

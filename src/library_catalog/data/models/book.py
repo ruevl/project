@@ -23,7 +23,9 @@ class Book(Base):
         pages: Количество страниц
         available: Доступна ли книга
         isbn: ISBN номер
+        cover_url: URL обложки книги (из OpenLibrary)
         description: Описание
+        subjects: Список тем/категорий (из OpenLibrary)
         extra: Дополнительные данные из Open Library
         created_at: Дата создания записи
         updated_at: Дата последнего обновления
@@ -58,9 +60,9 @@ class Book(Base):
         index=True,
     )
 
-    genre: Mapped[str] = mapped_column(
+    genre: Mapped[str | None] = mapped_column(
         String(100),
-        nullable=False,
+        nullable=True,
         index=True,
     )
 
@@ -83,8 +85,18 @@ class Book(Base):
         unique=True,
     )
 
+    cover_url: Mapped[str | None] = mapped_column(
+        String(500),
+        nullable=True,
+    )
+
     description: Mapped[str | None] = mapped_column(
         Text,
+        nullable=True,
+    )
+
+    subjects: Mapped[list[str] | None] = mapped_column(  # ← ИСПРАВЛЕНО: теперь list[str] + JSON
+        JSON,
         nullable=True,
     )
 

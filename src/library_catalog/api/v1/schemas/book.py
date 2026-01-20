@@ -2,22 +2,25 @@
 
 from datetime import datetime
 from uuid import UUID
+from typing import Optional, Union, List
 from pydantic import BaseModel, Field, field_validator
+
 
 class BookBase(BaseModel):
     title: str = Field(..., min_length=1, max_length=500)
     author: str = Field(..., min_length=1, max_length=300)
     year: int = Field(..., ge=1000, le=2100)
-    genre: str = Field(..., min_length=1, max_length=100)
     pages: int = Field(..., gt=0)
+    genre: Optional[str] = Field(None, max_length=100)
+
 
 class BookCreate(BookBase):
-    isbn: str | None = Field(None, min_length=10, max_length=20)
-    description: str | None = Field(None, max_length=5000)
+    isbn: Optional[str] = Field(None, min_length=10, max_length=20)
+    description: Optional[str] = Field(None, max_length=5000)
 
     @field_validator("isbn")
     @classmethod
-    def validate_isbn(cls, v: str | None) -> str | None:
+    def validate_isbn(cls, v: Optional[str]) -> Optional[str]:
         if v is None:
             return v
         clean = v.replace("-", "").replace(" ", "")
@@ -43,22 +46,25 @@ class BookCreate(BookBase):
         }
     }
 
+
 class BookUpdate(BaseModel):
-    title: str | None = Field(None, min_length=1, max_length=500)
-    author: str | None = Field(None, min_length=1, max_length=300)
-    year: int | None = Field(None, ge=1000, le=2100)
-    genre: str | None = Field(None, min_length=1, max_length=100)
-    pages: int | None = Field(None, gt=0)
-    available: bool | None = None
-    isbn: str | None = None
-    description: str | None = None
+    title: Optional[str] = Field(None, min_length=1, max_length=500)
+    author: Optional[str] = Field(None, min_length=1, max_length=300)
+    year: Optional[int] = Field(None, ge=1000, le=2100)
+    pages: Optional[int] = Field(None, gt=0)
+    genre: Optional[str] = Field(None, max_length=100)
+    available: Optional[bool] = None
+    isbn: Optional[str] = None
+    description: Optional[str] = None
+
 
 class ShowBook(BookBase):
     book_id: UUID
     available: bool
-    isbn: str | None
-    description: str | None
-    extra: dict | None
+    isbn: Optional[str]
+    description: Optional[str]
+    subjects: Optional[Union[List[str], str]] = None
+    extra: Optional[dict]
     created_at: datetime
     updated_at: datetime
 
@@ -76,9 +82,9 @@ class ShowBook(BookBase):
                     "available": True,
                     "isbn": "978-0132350884",
                     "description": "A Handbook of Agile Software Craftsmanship",
+                    "subjects": ["Computer Science", "Software Engineering"],
                     "extra": {
-                        "cover_url": "https://covers.openlibrary.org/b/id/123-L.jpg",
-                        "subjects": ["Computer Science", "Software Engineering"]
+                        "cover_url": "https://covers.openlibrary.org/b/id/123-L.jpg"
                     },
                     "created_at": "2024-01-01T12:00:00",
                     "updated_at": "2024-01-01T12:00:00"

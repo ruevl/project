@@ -1,156 +1,174 @@
-"""Клиент для Open Library API."""
+# src/library_catalog/external/openlibrary/client.py
+"""OpenLibrary API client with Redis caching."""
 
-import httpx
+import logging
+from typing import Any
 
-from ...domain.exceptions import OpenLibraryException, OpenLibraryTimeoutException
-from ..base.base_client import BaseApiClient
+from ...core.cache import cache, CacheKeys
+from ..base.base_client import BaseClient
+from .exceptions import OpenLibraryException, OpenLibraryTimeoutException
+
+logger = logging.getLogger(__name__)
 
 
-class OpenLibraryClient(BaseApiClient):
-    """Клиент для Open Library API."""
+class OpenLibraryClient(BaseClient):
+    """Client for OpenLibrary API with caching support."""
 
-    def __init__(
-            self,
-            base_url: str = "https://openlibrary.org",
-            timeout: float = 10.0,
-    ):
-        """Инициализация клиента."""
-        super().__init__(base_url, timeout=timeout)
-
-    def client_name(self) -> str:
-        """Имя клиента."""
-        return "openlibrary"
-
-    async def search_by_isbn(self, isbn: str) -> dict:
+    async def search_by_isbn(self, isbn: str) -> dict[str, Any]:
         """
-        Поиск книги по ISBN.
+        Search book by ISBN with caching.
 
         Args:
-            isbn: ISBN-10 или ISBN-13
+            isbn: Book ISBN
 
         Returns:
-            Данные книги (cover_url, subjects, etc.)
-
-        Raises:
-            OpenLibraryException: При ошибке API
-            OpenLibraryTimeoutException: При таймауте
+            Book data from OpenLibrary or empty dict
         """
+        # Check cache first
+        cache_key = CacheKeys.openlibrary_isbn(isbn)
+        cached = await cache.get(cache_key)
+
+        if cached is not None:
+            logger.debug(f"Cache HIT for ISBN {isbn}")
+            return cached
+
+        logger.debug(f"Cache MISS for ISBN {isbn}")
+
+        # Query API
         try:
-            data = await self._get(
+            data = await self._request(
+                "GET",
                 "/search.json",
-                params={"isbn": isbn, "limit": 1}
+                params={"isbn": isbn, "fields": "key,title,author_name,cover_i,subject,publisher,language"},
             )
 
             docs = data.get("docs", [])
             if not docs:
-                return {}
+                result = {}
+            else:
+                result = self._extract_book_data(docs[0])
 
-            return self._extract_book_data(docs[0])
+            # Cache result (even if empty)
+            await cache.set(cache_key, result)
 
-        except httpx.TimeoutException:
-            raise OpenLibraryTimeoutException(self.timeout)
-        except httpx.HTTPError as e:
-            raise OpenLibraryException(str(e))
+            return result
 
-    async def search_by_title_author(
-            self,
-            title: str,
-            author: str
-    ) -> dict:
+        except Exception as e:
+            logger.warning(f"OpenLibrary API error for ISBN {isbn}: {e}")
+            # Don't cache errors
+            return {}
+
+    async def search_by_title_author(self, title: str, author: str) -> dict[str, Any]:
         """
-        Поиск по названию и автору.
+        Search book by title and author with caching.
 
         Args:
-            title: Название книги
-            author: Автор
+            title: Book title
+            author: Book author
 
         Returns:
-            Данные книги
-
-        Raises:
-            OpenLibraryException: При ошибке API
+            Book data from OpenLibrary or empty dict
         """
+        # Check cache first
+        cache_key = CacheKeys.openlibrary_title_author(title, author)
+        cached = await cache.get(cache_key)
+
+        if cached is not None:
+            logger.debug(f"Cache HIT for '{title}' by {author}")
+            return cached
+
+        logger.debug(f"Cache MISS for '{title}' by {author}")
+
+        # Query API
         try:
-            data = await self._get(
+            data = await self._request(
+                "GET",
                 "/search.json",
                 params={
                     "title": title,
                     "author": author,
-                    "limit": 1
-                }
+                    "fields": "key,title,author_name,cover_i,subject,publisher,language",
+                },
             )
 
             docs = data.get("docs", [])
             if not docs:
-                return {}
+                result = {}
+            else:
+                result = self._extract_book_data(docs[0])
 
-            return self._extract_book_data(docs[0])
+            # Cache result
+            await cache.set(cache_key, result)
 
-        except httpx.TimeoutException:
-            raise OpenLibraryTimeoutException(self.timeout)
-        except httpx.HTTPError as e:
-            raise OpenLibraryException(str(e))
+            return result
+
+        except Exception as e:
+            logger.warning(f"OpenLibrary API error for '{title}' by {author}: {e}")
+            return {}
 
     async def enrich(
             self,
-            title: str,
-            author: str,
             isbn: str | None = None,
-    ) -> dict:
+            title: str | None = None,
+            author: str | None = None,
+    ) -> dict[str, Any]:
         """
-        Обогатить данные книги.
+        Enrich book data from OpenLibrary.
 
-        Сначала пытается найти по ISBN, затем по title+author.
+        Tries ISBN first (most accurate), then falls back to title/author.
 
         Args:
-            title: Название
-            author: Автор
-            isbn: ISBN (опционально)
+            isbn: Optional ISBN
+            title: Optional title
+            author: Optional author
 
         Returns:
-            Обогащенные данные или пустой словарь
+            Enriched book data or empty dict
         """
-        # Попытка 1: По ISBN
+        # Try ISBN first (most reliable)
         if isbn:
             data = await self.search_by_isbn(isbn)
             if data:
                 return data
 
-        # Попытка 2: По title + author
-        return await self.search_by_title_author(title, author)
+        # Fallback to title/author
+        if title and author:
+            data = await self.search_by_title_author(title, author)
+            if data:
+                return data
 
-    def _extract_book_data(self, doc: dict) -> dict:
+        return {}
+
+    def _extract_book_data(self, doc: dict[str, Any]) -> dict[str, Any]:
         """
-        Извлечь нужные поля из ответа Open Library.
+        Extract relevant book data from OpenLibrary document.
 
         Args:
-            doc: Документ из массива docs
+            doc: OpenLibrary API document
 
         Returns:
-            Обработанные данные
+            Extracted book data
         """
-        result = {}
+        result: dict[str, Any] = {}
 
-        # Cover URL
-        if cover_id := doc.get("cover_i"):
-            result["cover_url"] = (
-                f"https://covers.openlibrary.org/b/id/{cover_id}-L.jpg"
-            )
+        # Cover image
+        cover_id = doc.get("cover_i")
+        if cover_id:
+            result["cover_url"] = f"https://covers.openlibrary.org/b/id/{cover_id}-L.jpg"
 
-        # Subjects (темы)
-        if subjects := doc.get("subject"):
-            result["subjects"] = subjects[:10]  # Первые 10
+        # Subjects (limited to top 5)
+        subjects = doc.get("subject", [])
+        if subjects:
+            result["subjects"] = subjects[:5]
 
         # Publisher
-        if publisher := doc.get("publisher"):
-            result["publisher"] = publisher[0] if publisher else None
+        publishers = doc.get("publisher")
+        if publishers and isinstance(publishers, list):
+            result["publisher"] = publishers[0]
 
         # Language
-        if language := doc.get("language"):
-            result["language"] = language[0] if language else None
-
-        # Ratings
-        if ratings := doc.get("ratings_average"):
-            result["rating"] = ratings
+        languages = doc.get("language")
+        if languages and isinstance(languages, list):
+            result["language"] = languages[0]
 
         return result

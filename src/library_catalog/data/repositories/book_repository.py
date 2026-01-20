@@ -14,6 +14,20 @@ class BookRepository(BaseRepository[Book]):
         """Инициализация."""
         super().__init__(session, Book)
 
+    async def find_by_isbn(self, isbn: str) -> Book | None:
+        """
+        Найти книгу по ISBN.
+
+        Args:
+            isbn: ISBN номер
+
+        Returns:
+            Книга или None
+        """
+        stmt = select(Book).where(Book.isbn == isbn)
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
     async def find_by_filters(
             self,
             title: str | None = None,
@@ -64,19 +78,46 @@ class BookRepository(BaseRepository[Book]):
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
-    async def find_by_isbn(self, isbn: str) -> Book | None:
+    async def find_all(
+            self,
+            limit: int = 20,
+            offset: int = 0,
+            title: str | None = None,
+            author: str | None = None,
+            year: int | None = None,
+    ) -> tuple[list[Book], int]:
         """
-        Найти книгу по ISBN.
-
-        Args:
-            isbn: ISBN номер
+        Получить все книги с фильтрацией и пагинацией.
 
         Returns:
-            Книга или None
+            Кортеж из (список книг, общее количество)
         """
-        stmt = select(Book).where(Book.isbn == isbn)
+        # Сначала получаем общее количество
+        count_stmt = select(func.count()).select_from(Book)
+        if title:
+            count_stmt = count_stmt.where(Book.title.ilike(f"%{title}%"))
+        if author:
+            count_stmt = count_stmt.where(Book.author.ilike(f"%{author}%"))
+        if year is not None:
+            count_stmt = count_stmt.where(Book.year == year)
+
+        count_result = await self.session.execute(count_stmt)
+        total = count_result.scalar_one()
+
+        # Затем получаем книги
+        stmt = select(Book)
+        if title:
+            stmt = stmt.where(Book.title.ilike(f"%{title}%"))
+        if author:
+            stmt = stmt.where(Book.author.ilike(f"%{author}%"))
+        if year is not None:
+            stmt = stmt.where(Book.year == year)
+
+        stmt = stmt.offset(offset).limit(limit)
         result = await self.session.execute(stmt)
-        return result.scalar_one_or_none()
+        books = list(result.scalars().all())
+
+        return books, total
 
     async def count_by_filters(
             self,
